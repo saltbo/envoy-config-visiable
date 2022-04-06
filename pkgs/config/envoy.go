@@ -42,7 +42,7 @@ func init() {
 type nodeMap map[string][]*Node
 
 func (nm nodeMap) insert(parentName, name string) {
-	nm[parentName] = append(nm[parentName], &Node{Name: name})
+	nm[parentName] = append(nm[parentName], &Node{Name: name, Value: 1})
 }
 
 func Decode(configBytes []byte) error {
@@ -68,6 +68,14 @@ func Decode(configBytes []byte) error {
 					if !strings.HasPrefix(l.Name, "0.0.0.0_") {
 						continue
 					}
+
+					if !strings.HasPrefix(l.Name, "0.0.0.0_8080") {
+						continue
+					}
+
+					// if !strings.HasSuffix(l.Name, "_10912") {
+					// 	continue
+					// }
 
 					for _, filter := range chain.Filters {
 						hcm := new(envoy_extensions_filters_network_http_connection_manager_v3.HttpConnectionManager)
@@ -113,18 +121,15 @@ func Decode(configBytes []byte) error {
 	// 生成根节点
 	lNodes := make([]*Node, 0)
 	for listener, rNodes := range lMap {
-		lNodes = append(lNodes, &Node{Name: listener, Children: rNodes})
+		lNodes = append(lNodes, &Node{Name: listener, Children: rNodes}) // route
 	}
 
 	// 根节点领养子节点
 	for _, lNode := range lNodes {
 		for _, rNode := range lNode.Children {
-			rNode.Value = 1
 			rNode.Children = rMap[rNode.Name] // cluster
 
-			lNode.Value = len(rNode.Children)
 			for _, cNode := range rNode.Children {
-				cNode.Value = 1
 				cNode.Children = cMap[cNode.Name] // endpoints
 			}
 		}
@@ -133,6 +138,8 @@ func Decode(configBytes []byte) error {
 	nodeMap := make(map[string]*Node)
 	links := make([]Link, 0)
 	for _, lNode := range lNodes {
+		lNode.calcV()
+		lNode.dump("")
 		nodeMap[lNode.Name] = lNode
 
 		for _, rNode := range lNode.Children {
@@ -141,11 +148,11 @@ func Decode(configBytes []byte) error {
 
 			for _, cNode := range rNode.Children {
 				nodeMap[cNode.Name] = cNode
-				links = append(links, Link{Source: rNode.Name, Target: cNode.Name, Value: rNode.Value})
+				links = append(links, Link{Source: rNode.Name, Target: cNode.Name, Value: cNode.Value})
 
 				for _, eNode := range cNode.Children {
 					nodeMap[eNode.Name] = eNode
-					links = append(links, Link{Source: cNode.Name, Target: eNode.Name, Value: cNode.Value})
+					links = append(links, Link{Source: cNode.Name, Target: eNode.Name, Value: eNode.Value})
 				}
 			}
 		}
@@ -171,10 +178,30 @@ func Decode(configBytes []byte) error {
 }
 
 type Node struct {
-	Name  string `json:"name"`
-	Value int    `json:"-"`
-	// Parent   string  `json:"-"`
+	Name     string  `json:"name"`
+	Value    int     `json:"-"`
 	Children []*Node `json:"-"`
+}
+
+func (n *Node) calcV() {
+	if len(n.Children) == 0 {
+		return
+	}
+
+	n.Value = 0
+	for _, child := range n.Children {
+		child.calcV()
+		n.Value += child.Value
+	}
+}
+
+func (n *Node) dump(tabs string) {
+	fmt.Printf("%s|--%s[%d]\n", tabs, n.Name, n.Value)
+
+	tabs += "    "
+	for _, child := range n.Children {
+		child.dump(tabs)
+	}
 }
 
 type Link struct {
